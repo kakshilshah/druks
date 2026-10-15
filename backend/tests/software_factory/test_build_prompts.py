@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 from druks.contrib import software_factory
+from druks.contrib.software_factory.contracts import ReviewWork
+from druks.contrib.software_factory.exceptions import MergeConflictError
 from druks.contrib.software_factory.journal import BuildJournal
 from druks.contrib.software_factory.models import Project, ProjectRepo
 from druks.contrib.software_factory.policy import RepoPolicy
@@ -179,6 +181,48 @@ async def test_comment_mode_swaps_the_review_event_mapping():
 
     assert "Submit every review as a `COMMENT` event" in prompt
     assert "an **approving** verdict → `APPROVE`" not in prompt
+
+
+async def test_implement_prompt_rebases_once_after_a_merge_conflict():
+    build = _build()
+    build.journal.add(MergeConflictError("main", "c0ffee"))
+    prompt = await render_prompt(
+        "software_factory/build/implement.md",
+        build=build,
+        verification="VERIFICATION-BLOCK",
+        workspace=_workspace(),
+    )
+    plain = await render_prompt(
+        "software_factory/build/implement.md",
+        build=_build(),
+        verification="VERIFICATION-BLOCK",
+        workspace=_workspace(),
+    )
+
+    assert "## Merge conflict" in prompt
+    assert "git rebase c0ffee" in prompt
+    assert "git push --force-with-lease origin agent/eng-1" in prompt
+    assert "If the push is rejected because the remote branch moved" not in prompt
+    assert "Implement the approved plan" not in prompt
+    assert "Before pushing, you may run" in prompt
+    assert "## Merge conflict" not in plain
+    assert "--force-with-lease" not in plain
+    assert "If the push is rejected because the remote branch moved" in plain
+    assert "Implement the approved plan" in plain
+
+
+async def test_triage_prompt_names_an_in_app_note_as_the_operators():
+    build = _build()
+    build.journal.add(ReviewWork(action="request_changes", note="Split the migration."))
+    prompt = await render_prompt(
+        "software_factory/build/triage_human_feedback.md",
+        build=build,
+        verification="VERIFICATION-BLOCK",
+        workspace=_workspace(),
+    )
+
+    assert "### The operator, in Druks — PENDING, not yet triaged" in prompt
+    assert "Split the migration." in prompt
 
 
 def test_build_prompt_context_covers_template_attrs():

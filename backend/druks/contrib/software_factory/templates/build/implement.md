@@ -43,9 +43,15 @@ acceptance criterion — nothing more, nothing less.
 
 {{ build.journal.revision_request }}
 
+{% endif %}
+{% if build.journal.rebase_request %}
+## Merge conflict
+
+GitHub cannot merge the PR, because the work branch conflicts with `{{ build.journal.rebase_request.base_ref }}`. This round rebases the work branch onto `{{ build.journal.rebase_request.base_sha }}` and does nothing else. Resolve each conflict so that the approved plan's behavior stays as it was.
+
 {% endif %}When the checkout has `.druks/review/checklist.md`, read it before you write: it is the repo's standing rules for code and prose, and the reviewer holds your diff to it.
 
-Implement the approved plan (rendered above as **Current plan**) on the work branch (see "Delivering your work" below). When a **Revision request** section is rendered above, implement it on top of the plan — it is the reviewer's feedback, already triaged into instructions. Before pushing, you may run the repo's configured test, lint, or typecheck command narrowed to the files your diff touches — self-checking your own work, nothing more. Never run the full verification profile, and never adjudicate it: the evaluator owns that verdict, and a failure you cannot attribute to your own diff is environment noise to report, not a gate to chase. Do not run ad hoc install, build, or smoke commands beyond that unless the plan explicitly requires changing those commands or generated outputs. Never leave dependency lockfile, generated, or cache changes unless they are part of the requested implementation. Return structured evidence for every acceptance criterion, every check you ran or intentionally did not run, changed files, and known risks. If a check was not run, include status not_run and a reason.
+{% if not build.journal.rebase_request %}Implement the approved plan (rendered above as **Current plan**) on the work branch (see "Delivering your work" below). When a **Revision request** section is rendered above, implement it on top of the plan — it is the reviewer's feedback, already triaged into instructions. {% endif %}Before pushing, you may run the repo's configured test, lint, or typecheck command narrowed to the files your diff touches — self-checking your own work, nothing more. Never run the full verification profile, and never adjudicate it: the evaluator owns that verdict, and a failure you cannot attribute to your own diff is environment noise to report, not a gate to chase. Do not run ad hoc install, build, or smoke commands beyond that unless the plan explicitly requires changing those commands or generated outputs. Never leave dependency lockfile, generated, or cache changes unless they are part of the requested implementation. Return structured evidence for every acceptance criterion, every check you ran or intentionally did not run, changed files, and known risks. If a check was not run, include status not_run and a reason.
 
 ## Delivering your work
 
@@ -61,10 +67,16 @@ When the implementation is complete, run from the repo root (pushing with `git p
 {% endif %}
 
 ```
+{% if build.journal.rebase_request %}
+git fetch origin {{ build.journal.rebase_request.base_ref }}
+git rebase {{ build.journal.rebase_request.base_sha }}   # resolve each conflict, `git add` it, then `git rebase --continue`
+git push --force-with-lease origin {{ build.branch }}
+{% else %}
 git status --short                      # review what changed
 git add <each changed path>             # stage explicitly — never `git add -A` / `git add .`
 git commit -m "<concise subject describing this diff>"
 git push
+{% endif %}
 ```
 
 Stage only the paths your implementation changed; explicit staging is what keeps stray artifacts (caches, downloaded toolchains, editor files) out of the PR. The commit subject must describe what THIS commit's diff actually contains — not work that landed in earlier commits — and must not include the ticket or issue prefix.
@@ -86,7 +98,7 @@ After a successful push, open the draft PR against the default branch (`gh` is a
 - Title: `<ticket ref> - <ticket title>` for a Linear, Jira, or Druks board ticket (just the ref when the title is empty); the GitHub issue title verbatim when the source is GitHub.
 {% endif %}
 
-Authentication is already configured (a git credential helper supplies the token), so the push needs no further setup. After a successful push, report the resulting commit SHA in `head_sha` and `commit_sha`, and set `base_sha` to the commit you started from (the `git rev-parse HEAD` before your first commit). Report the branch you delivered on in `branch` and its PR number in `pr_number`. If the push is rejected because the remote branch moved, fetch and retry once (`git fetch origin <branch> && git rebase origin/<branch>`, resolve trivially, push again); if it still fails, return `status="needs_clarification"` explaining the conflict. `workspace_path` should be the repo root you worked in.
+Authentication is already configured (a git credential helper supplies the token), so the push needs no further setup. After a successful push, report the resulting commit SHA in `head_sha` and `commit_sha`, and set `base_sha` to the commit you started from (the `git rev-parse HEAD` before your first commit). Report the branch you delivered on in `branch` and its PR number in `pr_number`. {% if build.journal.rebase_request %}If the lease rejects the push, another push moved the branch: return `status="needs_clarification"` explaining it.{% else %}If the push is rejected because the remote branch moved, fetch and retry once (`git fetch origin <branch> && git rebase origin/<branch>`, resolve trivially, push again); if it still fails, return `status="needs_clarification"` explaining the conflict.{% endif %} `workspace_path` should be the repo root you worked in.
 
 CONTRADICTION ESCAPE — when the **Prior implementation review** section above shows a prior evaluation failed on a specific binding requirement, first check whether that requirement is internally consistent with the rest of the contract before attempting another fix. A requirement is contradictory when satisfying it would necessarily break another binding requirement, an acceptance criterion, the data model graph, a third-party library's documented behavior, or itself (mutually exclusive sub-clauses). Examples: 'cascading delete must propagate to all related rows' when a related row is explicitly PROTECTed; 'function must be both pure and perform I/O'; 'use exactly version X' when X is yanked.
 If you detect a contradiction, set status=needs_clarification and put a single concise paragraph in summary covering: which requirement is contradictory, what concretely contradicts it, what you tried in the previous revision (so the operator does not retry the same workaround), and what a coherent revised requirement could look like. Do not invent a half-working interpretation just to get a green eval; Druks fails the run with your summary as its reason, so the operator reads it directly and re-dispatches once the contract is fixed. Use this escape only when you have actually identified a contradiction — if the requirement is hard but achievable, keep implementing.
